@@ -45,7 +45,6 @@ TODO
 gst-python*.tar.*
 
 pygst.py
-gst-libs
 log
 
 m4/*

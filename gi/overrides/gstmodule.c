@@ -62,172 +62,7 @@ DL_EXPORT(void) init##symbol(void)          \
 #endif
 
 GST_DEBUG_CATEGORY_STATIC (python_debug);
-GST_DEBUG_CATEGORY_STATIC (pygst_debug);
-#define GST_CAT_DEFAULT pygst_debug
 
-static PyObject *
-gi_gst_fraction_from_value (const GValue * value)
-{
-  PyObject *module, *dict, *fraction_type, *args, *fraction;
-  gint numerator, denominator;
-
-  numerator = gst_value_get_fraction_numerator (value);
-  denominator = gst_value_get_fraction_denominator (value);
-
-  module = PyImport_ImportModule ("gi.repository.Gst");
-
-  if (module == NULL) {
-    PyErr_SetString (PyExc_KeyError,
-        "Could not get module for gi.repository.Gst");
-    return NULL;
-  }
-
-  dict = PyModule_GetDict (module);
-  Py_DECREF (module);
-
-  /* For some reson we need this intermediary step */
-  module = PyMapping_GetItemString (dict, "_overrides_module");
-  if (module == NULL) {
-    PyErr_SetString (PyExc_KeyError,
-        "Could not get module for _overrides_module");
-    return NULL;
-  }
-
-  dict = PyModule_GetDict (module);
-  fraction_type = PyMapping_GetItemString (dict, "Fraction");
-
-  args = Py_BuildValue ("(ii)", numerator, denominator);
-  fraction = PyObject_Call (fraction_type, args, NULL);
-  Py_DECREF (args);
-  Py_DECREF (fraction_type);
-  Py_DECREF (module);
-
-  return fraction;
-}
-
-static int
-gi_gst_fraction_to_value (GValue * value, PyObject * object)
-{
-  PyObject *numerator, *denominator;
-
-  numerator = PyObject_GetAttrString (object, "num");
-  if (numerator == NULL)
-    goto fail;
-
-  denominator = PyObject_GetAttrString (object, "denom");
-  if (denominator == NULL)
-    goto fail;
-
-  gst_value_set_fraction (value,
-      PyLong_AsLong (numerator), PyLong_AsLong (denominator));
-
-  return 0;
-
-fail:
-  return -1;
-}
-
-void
-gi_gst_register_types (PyObject * d)
-{
-  pyg_register_gtype_custom (GST_TYPE_FRACTION,
-      gi_gst_fraction_from_value, gi_gst_fraction_to_value);
-}
-
-static int
-add_templates (gpointer gclass, PyObject * templates)
-{
-  if (PyTuple_Check (templates)) {
-    gint i, len;
-    PyGObject *templ;
-
-    len = PyTuple_Size (templates);
-    if (len == 0)
-      return 0;
-
-    for (i = 0; i < len; i++) {
-      templ = (PyGObject *) PyTuple_GetItem (templates, i);
-      if (GST_IS_PAD_TEMPLATE (pygobject_get (templ)) == FALSE) {
-        PyErr_SetString (PyExc_TypeError,
-            "entries for __gsttemplates__ must be of type GstPadTemplate");
-        return -1;
-      }
-    }
-
-    for (i = 0; i < len; i++) {
-      templ = (PyGObject *) PyTuple_GetItem (templates, i);
-      gst_element_class_add_pad_template (gclass,
-          GST_PAD_TEMPLATE (templ->obj));
-    }
-    return 0;
-
-  }
-
-  if (GST_IS_PAD_TEMPLATE (pygobject_get (templates)) == FALSE) {
-    PyErr_SetString (PyExc_TypeError,
-        "entry for __gsttemplates__ must be of type GstPadTemplate");
-    return -1;
-  }
-
-  gst_element_class_add_pad_template (gclass,
-      GST_PAD_TEMPLATE (pygobject_get (templates)));
-
-  return 0;
-}
-
-static int
-_pygst_element_set_metadata (gpointer gclass, PyObject * metadata)
-{
-
-  const gchar *longname, *classification, *description, *author;
-
-  if (!PyTuple_Check (metadata)) {
-    PyErr_SetString (PyExc_TypeError, "__gstmetadata__ must be a tuple");
-    return -1;
-  }
-  if (PyTuple_Size (metadata) != 4) {
-    PyErr_SetString (PyExc_TypeError,
-        "__gstmetadata__ must contain 4 elements");
-    return -1;
-  }
-  if (!PyArg_ParseTuple (metadata, "ssss", &longname, &classification,
-          &description, &author)) {
-    PyErr_SetString (PyExc_TypeError, "__gstmetadata__ must contain 4 strings");
-    return -1;
-  }
-  GST_DEBUG
-      ("setting metadata on gclass %p from __gstmetadata__, longname %s",
-      gclass, longname);
-
-  gst_element_class_set_metadata (gclass, longname, classification,
-      description, author);
-  return 0;
-}
-
-static int
-_pygst_element_init (gpointer gclass, PyTypeObject * pyclass)
-{
-  PyObject *templates, *metadata;
-
-  GST_DEBUG ("_pygst_element_init for gclass %p", gclass);
-  templates = PyDict_GetItemString (pyclass->tp_dict, "__gsttemplates__");
-  if (templates) {
-    if (add_templates (gclass, templates) != 0)
-      return -1;
-  } else {
-    PyErr_Clear ();
-  }
-  metadata = PyDict_GetItemString (pyclass->tp_dict, "__gstmetadata__");
-  if (metadata) {
-    if (_pygst_element_set_metadata (gclass, metadata) != 0)
-      return -1;
-    PyDict_DelItemString (pyclass->tp_dict, "__gstmetadata__");
-  } else {
-    PyErr_Clear ();
-  }
-
-  return 0;
-}
 
 #include <frameobject.h>
 
@@ -345,23 +180,209 @@ static PyMethodDef _gi_gst_functions[] = {
       NULL}
 };
 
+GST_DEBUG_CATEGORY_STATIC (gstpython_debug);
+#define GST_CAT_DEFAULT gstpython_debug
+
+static int
+add_templates (gpointer gclass, PyObject * templates)
+{
+  if (PyTuple_Check (templates)) {
+    gint i, len;
+    PyGObject *templ;
+
+    len = PyTuple_Size (templates);
+    if (len == 0)
+      return 0;
+
+    for (i = 0; i < len; i++) {
+      templ = (PyGObject *) PyTuple_GetItem (templates, i);
+      if (GST_IS_PAD_TEMPLATE (pygobject_get (templ)) == FALSE) {
+        PyErr_SetString (PyExc_TypeError,
+            "entries for __gsttemplates__ must be of type GstPadTemplate");
+        return -1;
+      }
+    }
+
+    for (i = 0; i < len; i++) {
+      templ = (PyGObject *) PyTuple_GetItem (templates, i);
+      gst_element_class_add_pad_template (gclass,
+          GST_PAD_TEMPLATE (templ->obj));
+    }
+    return 0;
+
+  }
+
+  if (GST_IS_PAD_TEMPLATE (pygobject_get (templates)) == FALSE) {
+    PyErr_SetString (PyExc_TypeError,
+        "entry for __gsttemplates__ must be of type GstPadTemplate");
+    return -1;
+  }
+
+  gst_element_class_add_pad_template (gclass,
+      GST_PAD_TEMPLATE (pygobject_get (templates)));
+
+  return 0;
+}
+
+static int
+_pygst_element_set_metadata (gpointer gclass, PyObject * metadata)
+{
+  const gchar *longname, *classification, *description, *author;
+
+  GST_ERROR ("HERE WE GO!");
+  if (!PyTuple_Check (metadata)) {
+    PyErr_SetString (PyExc_TypeError, "__gstmetadata__ must be a tuple");
+    return -1;
+  }
+  if (PyTuple_Size (metadata) != 4) {
+    PyErr_SetString (PyExc_TypeError,
+        "__gstmetadata__ must contain 4 elements");
+    return -1;
+  }
+  if (!PyArg_ParseTuple (metadata, "ssss", &longname, &classification,
+          &description, &author)) {
+    PyErr_SetString (PyExc_TypeError, "__gstmetadata__ must contain 4 strings");
+    return -1;
+  }
+  GST_ERROR
+      ("setting metadata on gclass %p from __gstmetadata__, longname %s",
+      gclass, longname);
+
+  gst_element_class_set_metadata (gclass, longname, classification,
+      description, author);
+  return 0;
+}
+
+static int
+_pygst_element_init (gpointer gclass, PyTypeObject * pyclass)
+{
+  PyObject *templates, *metadata;
+
+  GST_ERROR ("_pygst_element_init for gclass %p", gclass);
+  templates = PyDict_GetItemString (pyclass->tp_dict, "__gsttemplates__");
+  if (templates) {
+    if (add_templates (gclass, templates) != 0)
+      return -1;
+  } else {
+    PyErr_Clear ();
+  }
+  metadata = PyDict_GetItemString (pyclass->tp_dict, "__gstmetadata__");
+  if (metadata) {
+    if (_pygst_element_set_metadata (gclass, metadata) != 0)
+      return -1;
+    PyDict_DelItemString (pyclass->tp_dict, "__gstmetadata__");
+  } else {
+    PyErr_Clear ();
+  }
+
+  return 0;
+}
+
+static PyObject *
+gi_gst_fraction_from_value (const GValue * value)
+{
+  PyObject *module, *dict, *fraction_type, *args, *fraction;
+  gint numerator, denominator;
+
+  numerator = gst_value_get_fraction_numerator (value);
+  denominator = gst_value_get_fraction_denominator (value);
+
+  module = PyImport_ImportModule ("gi.repository.Gst");
+
+  if (module == NULL) {
+    PyErr_SetString (PyExc_KeyError,
+        "Could not get module for gi.repository.Gst");
+    return NULL;
+  }
+
+  dict = PyModule_GetDict (module);
+  Py_DECREF (module);
+
+  /* For some reson we need this intermediary step */
+  module = PyMapping_GetItemString (dict, "_overrides_module");
+  if (module == NULL) {
+    PyErr_SetString (PyExc_KeyError,
+        "Could not get module for _overrides_module");
+    return NULL;
+  }
+
+  dict = PyModule_GetDict (module);
+  fraction_type = PyMapping_GetItemString (dict, "Fraction");
+
+  args = Py_BuildValue ("(ii)", numerator, denominator);
+  fraction = PyObject_Call (fraction_type, args, NULL);
+  Py_DECREF (args);
+  Py_DECREF (fraction_type);
+  Py_DECREF (module);
+
+  return fraction;
+}
+
+static int
+gi_gst_fraction_to_value (GValue * value, PyObject * object)
+{
+  PyObject *numerator, *denominator;
+
+  numerator = PyObject_GetAttrString (object, "num");
+  if (numerator == NULL)
+    goto fail;
+
+  denominator = PyObject_GetAttrString (object, "denom");
+  if (denominator == NULL)
+    goto fail;
+
+  gst_value_set_fraction (value,
+      PyLong_AsLong (numerator), PyLong_AsLong (denominator));
+
+  return 0;
+
+fail:
+  return -1;
+}
+
+void
+gi_gst_register_types (PyObject * d)
+{
+  GST_ERROR ("===> %p", _PyGObject_API);
+  pyg_register_gtype_custom (GST_TYPE_FRACTION,
+      gi_gst_fraction_from_value, gi_gst_fraction_to_value);
+}
+
+void
+gst_python_init (void)
+{
+  /* gst should have been initialized already */
+
+  static gboolean registered = FALSE;
+  if (registered)
+    return;
+
+  registered = TRUE;
+
+  /* Initialize debugging category */
+  GST_DEBUG_CATEGORY_INIT (gstpython_debug, "python", GST_DEBUG_FG_GREEN,
+      "python code using gst-python");
+
+  GST_ERROR ("===> %p", _PyGObject_API);
+  pygobject_init (3, 0, 0);
+  GST_ERROR ("===> %p", _PyGObject_API);
+
+  pyg_register_class_init (GST_TYPE_ELEMENT, _pygst_element_init);
+}
+
 PYGLIB_MODULE_START (_gi_gst, "_gi_gst")
 {
   PyObject *d;
 
-  /* gst should have been initialized already */
+  d = PyModule_GetDict (module);
+  g_assert (d);
+  gst_python_init ();
 
-  /* Initialize debugging category */
-  GST_DEBUG_CATEGORY_INIT (pygst_debug, "pygst", 0,
-      "GStreamer python bindings");
+  GST_ERROR ("WHo yeah");
+
   GST_DEBUG_CATEGORY_INIT (python_debug, "python", GST_DEBUG_FG_GREEN,
       "python code using gst-python");
-
-  pygobject_init (3, 0, 0);
-
-  d = PyModule_GetDict (module);
   gi_gst_register_types (d);
-  pyg_register_class_init (GST_TYPE_ELEMENT, _pygst_element_init);
 }
 
 PYGLIB_MODULE_END;
