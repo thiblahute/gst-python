@@ -3,6 +3,7 @@
 # Keep this list sorted!
 tests =	\
 	test_gst.py \
+	test_passthrough_element.py \
 	test_fraction.py
 
 EXTRA_DIST = \
